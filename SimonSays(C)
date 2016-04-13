@@ -1,0 +1,320 @@
+/* ========================================
+ *
+ * Copyright YOUR COMPANY, THE YEAR
+ * All Rights Reserved
+ * UNPUBLISHED, LICENSED SOFTWARE.
+ *
+ * CONFIDENTIAL AND PROPRIETARY INFORMATION
+ * WHICH IS THE PROPERTY OF your company.
+ *
+ * ========================================
+*/
+#include <project.h>
+
+uint16 fingerPos = 0xFFFF;
+uint16 fingerPosOld = 0xFFFF;
+int capsenseNotify;
+int CapLed = 0xFFFF;
+static int UserState;
+int StartButton = 0x05;
+static int TurnCount = 0;
+static int UserTurn = 0;
+
+enum colors
+{
+    blue, bluegreen, green, yellow, red, purple
+};
+
+enum Answers{
+ FALSE, TRUE   
+};
+
+//Creation of base structure of game. Will be used for creating the State Que
+struct State //States for the computer to select
+{
+  int colorState;
+  int blue;
+  int green;
+  int red;
+  int next;
+  int previous;
+};
+
+struct State StateQue[100]; //The actual state selection the user will need to copy
+struct State CompStates[5];
+//The Game will select between these states to pick which color the user needs to input
+void populateStates(){
+     
+    CompStates[0].colorState= blue;
+    CompStates[0].blue = 0;
+    CompStates[0].green = 0;
+    CompStates[0].red = 0;
+    CompStates[0].next = 1;
+    CompStates[0].previous = NULL;
+    
+    CompStates[1].colorState= bluegreen;
+    CompStates[1].blue = 0;
+    CompStates[1].green = 0;
+    CompStates[1].red = 1;
+    CompStates[1].next = 0;
+    CompStates[1].previous = 2;
+    
+    CompStates[2].colorState= green;
+    CompStates[2].blue = 1;
+    CompStates[2].green = 0;
+    CompStates[2].red = 1;
+    CompStates[2].next = 3;
+    CompStates[2].previous = 1;
+    
+    CompStates[3].colorState= yellow;
+    CompStates[3].blue = 1;
+    CompStates[3].green = 0;
+    CompStates[3].red = 0;
+    CompStates[3].next = 4;
+    CompStates[3].previous = 2;
+    
+    CompStates[4].colorState= red;
+    CompStates[4].blue = 1;
+    CompStates[4].green = 1;
+    CompStates[4].red = 0;
+    CompStates[4].next = NULL;
+    CompStates[4].previous = 3;
+}
+//Checks the Users Input compared to the Computers
+int compare(struct State CurrentUserState, struct State CurrentCompState){
+    if( CurrentUserState.colorState == CurrentCompState.colorState )
+    return TRUE;
+    
+    
+    else
+    return FALSE;    
+}
+//BLE GATT for the user to select starting the game
+void updateStart()
+{
+    CYBLE_GATTS_HANDLE_VALUE_NTF_T tempHandle;
+    
+   
+    
+    if(CyBle_GetState() != CYBLE_STATE_CONNECTED)
+    {
+         return;
+    }
+    tempHandle.attrHandle = CYBLE_LEDCAPSENSE_START_CHAR_HANDLE;
+    tempHandle.value.val = (uint8 *) StartButton;
+    tempHandle.value.len = 1;
+}
+void CapToLed() //This function translates the users finger to corrosponding color; This is the controller.
+{
+    if(CyBle_GetState() != CYBLE_STATE_CONNECTED)
+        return;
+    
+ 
+    if(CapLed >= 0x000 && CapLed < 0x0009)
+    {
+            blue_Write(0);
+            green_Write(1);
+            red_Write(1);
+            UserState = blue;
+    }
+    else if (CapLed >= 0x0009 && CapLed < 0x0020)
+    {
+            blue_Write(0);
+            green_Write(0);
+            red_Write(1);
+            UserState = bluegreen;
+    }
+    
+    else if (CapLed >= 0x0020 && CapLed < 0x0030)
+    {
+            green_Write(0);
+            red_Write(1);
+            blue_Write(1);
+            UserState = green;
+    }
+    
+    else if (CapLed >= 0x0030 && CapLed < 0x0040)
+    {
+            green_Write(0);
+            red_Write(0);
+            blue_Write(1);
+            UserState = yellow;
+            
+    }
+    
+    else if (CapLed >= 0x0040 && CapLed < 0xFFFF)
+    {
+            red_Write(0);
+            blue_Write(1);
+            green_Write(1);
+            UserState = red;
+    }
+     else 
+    {
+            red_Write(0);
+            blue_Write(0);
+            green_Write(1);
+            UserState = purple;
+    }
+    
+}
+//Seeds the computer states
+void SeedQue(int turn, struct State* CompStates){
+    uint8 StateSelector;
+    struct State* TempState;
+           
+    CyBle_GenerateRandomNumber(&StateSelector);
+    //seed the inital state
+    if (turn == 0){
+    StateSelector = StateSelector % 5;
+    }
+    else{
+    StateSelector = StateSelector % 2;
+        if(StateSelector == 0)
+            StateSelector = CompStates[1].previous;
+            
+        else
+            StateSelector = CompStates[1].next;  
+        
+    }
+     
+}
+
+void updateCapSense()
+{
+    if(CyBle_GetState() != CYBLE_STATE_CONNECTED)
+        return;
+    
+    CYBLE_GATTS_HANDLE_VALUE_NTF_T tempHandle;
+    
+    tempHandle.attrHandle = CYBLE_LEDCAPSENSE_CAPSENSE_CHAR_HANDLE;
+    tempHandle.value.val = (uint8 *)&fingerPos;
+    tempHandle.value.len = 2;
+    CyBle_GattsWriteAttributeValue(&tempHandle,0,&cyBle_connHandle,0);
+    
+    int currentPosition = (capsense_ReadCurrentScanningSensor());
+    if (capsenseNotify && (fingerPos != fingerPosOld)){
+        CyBle_GattsNotification(cyBle_connHandle, &tempHandle);
+        fingerPosOld = fingerPos;
+    }
+}
+void Disconnected()
+{//Blinks the blue light when not connected
+    if(CyBle_GetState() != CYBLE_STATE_CONNECTED){
+       blue_Write(0);
+       CyDelay(500);
+       blue_Write(1);
+       CyDelay(500);
+    }       
+}
+
+void UpdateLED(struct State Color){
+    red_Write (Color.red);
+    blue_Write (Color.blue);
+    green_Write(Color.green);
+}
+
+
+void BleCallBack(uint32 event, void* eventParam)
+{
+    CYBLE_GATTS_WRITE_REQ_PARAM_T *wrReqParam;
+    switch(event)
+    {
+        /* if there is a disconnect or the stack just turned on from a reset */
+        case CYBLE_EVT_STACK_ON:
+        case CYBLE_EVT_GAP_DEVICE_DISCONNECTED:
+            capsenseNotify = 0;
+            red_Write(1);
+            blue_Write(1);
+            green_Write(1);                 
+            CyBle_GappStartAdvertisement(CYBLE_ADVERTISING_FAST);            
+        break;
+            
+        /* when a connection is made, update the LED and Capsesnse States */
+        case CYBLE_EVT_GATT_CONNECT_IND:
+            updateStart();
+            updateCapSense();        
+        break;
+        
+        /*Handle write rwquest */
+        case CYBLE_EVT_GATTS_WRITE_REQ:
+            wrReqParam = (CYBLE_GATTS_WRITE_CMD_REQ_PARAM_T *) eventParam;
+            
+            /* Requests LED value and write the response if the requested write is allowed */
+            if(wrReqParam->handleValPair.attrHandle == CYBLE_LEDCAPSENSE_START_CHAR_HANDLE)
+            {
+                
+            /*request write the Start Button */
+                if(CYBLE_GATT_ERR_NONE == CyBle_GattsWriteAttributeValue(&wrReqParam->handleValPair,0, &cyBle_connHandle, CYBLE_GATT_DB_PEER_INITIATED)){
+                    StartButton =(wrReqParam->handleValPair.value.val[0]);
+                    CyBle_GattsWriteRsp(cyBle_connHandle);
+                }
+            }
+            
+            /* Requests Capsense value and write the response if the requested write is allowed */
+            if(wrReqParam->handleValPair.attrHandle == CYBLE_LEDCAPSENSE_CAPSENSE_CAPSENSECCCD_DESC_HANDLE)
+            
+            {    
+            /*request read the Capsense value */
+                if(CYBLE_GATT_ERR_NONE == CyBle_GattsWriteAttributeValue(&wrReqParam->handleValPair,0, &cyBle_connHandle, CYBLE_GATT_DB_PEER_INITIATED))
+                {
+                capsenseNotify = wrReqParam->handleValPair.value.val[0] & 0x01;
+                CyBle_GattsWriteRsp(cyBle_connHandle);
+                }
+            }
+            break;
+        default:
+            break;
+    }
+}
+int main()
+{
+    CyGlobalIntEnable; /* Enable global interrupts. */
+    
+    /* Place your initialization/startup code here (e.g. MyInst_Start()) */
+    capsense_Start();
+    capsense_InitializeEnabledBaselines();
+    populateStates();
+    CyBle_Start(BleCallBack);
+    
+    
+    for(;;)
+    {
+        int TempTurncount = 0;
+        updateStart();    
+        //The main loop of the game
+        if( StartButton == 0x05){
+            
+            //This section is responsible for handling computer side of the game
+            if(UserTurn == 0){
+                
+                SeedQue(TurnCount, CompStates);//For this current turn select a pre-programmed state
+                while (TempTurncount < TurnCount){ //cycle through the states and display them for the user
+                    UpdateLED(StateQue[TempTurncount]);
+                    CyDelay(800);
+                    TempTurncount++;
+                }
+                TurnCount++;
+                UserTurn = 1;
+            }
+            //Enables capsense and records users input to compare with the computers
+            else{
+                red_Write(1);
+                if(!capsense_IsBusy()){
+                fingerPos=capsense_GetCentroidPos(capsense_LINEARSLIDER0__LS);
+                CapLed = fingerPos;
+                capsense_UpdateEnabledBaselines();
+                capsense_ScanEnabledWidgets();
+                CapToLed();
+                updateCapSense();                      
+                }
+            }
+        }
+        
+        
+        CyBle_ProcessEvents();
+        CyBle_EnterLPM(CYBLE_BLESS_DEEPSLEEP);
+    }
+}
+
+/* [] END OF FILE */
