@@ -10,7 +10,7 @@
  * ========================================
 */
 #include <project.h>
-
+#include <stdlib.h>
 uint16 fingerPos = 0xFFFF;
 uint16 fingerPosOld = 0xFFFF;
 int capsenseNotify;
@@ -19,6 +19,8 @@ static int UserState;
 int StartButton = 0x05;
 static int TurnCount = 0;
 static int UserTurn = 0;
+int StateSelector;
+int CurrentState;
 
 enum colors
 {
@@ -41,23 +43,23 @@ struct State //States for the computer to select
 };
 
 struct State StateQue[100]; //The actual state selection the user will need to copy
-struct State CompStates[5];
+struct State CompStates[6];
 //The Game will select between these states to pick which color the user needs to input
 void populateStates(){
      
     CompStates[0].colorState= blue;
     CompStates[0].blue = 0;
-    CompStates[0].green = 0;
-    CompStates[0].red = 0;
+    CompStates[0].green = 1;
+    CompStates[0].red = 1;
     CompStates[0].next = 1;
-    CompStates[0].previous = NULL;
+    CompStates[0].previous = 4;
     
     CompStates[1].colorState= bluegreen;
     CompStates[1].blue = 0;
     CompStates[1].green = 0;
     CompStates[1].red = 1;
-    CompStates[1].next = 0;
-    CompStates[1].previous = 2;
+    CompStates[1].next = 2;
+    CompStates[1].previous = 0;
     
     CompStates[2].colorState= green;
     CompStates[2].blue = 1;
@@ -77,8 +79,15 @@ void populateStates(){
     CompStates[4].blue = 1;
     CompStates[4].green = 1;
     CompStates[4].red = 0;
-    CompStates[4].next = NULL;
+    CompStates[4].next = 0;
     CompStates[4].previous = 3;
+    
+    CompStates[5].colorState= red;
+    CompStates[5].blue = 1;
+    CompStates[5].green = 1;
+    CompStates[5].red = 1;
+    CompStates[5].next = 0;
+    CompStates[5].previous = 0;
 }
 //Checks the Users Input compared to the Computers
 int compare(struct State CurrentUserState, struct State CurrentCompState){
@@ -160,24 +169,29 @@ void CapToLed() //This function translates the users finger to corrosponding col
 }
 //Seeds the computer states
 void SeedQue(int turn, struct State* CompStates){
-    uint8 StateSelector;
     struct State* TempState;
-           
-    CyBle_GenerateRandomNumber(&StateSelector);
+    
+    StateSelector = rand();
     //seed the inital state
-    if (turn == 0){
-    StateSelector = StateSelector % 5;
-    }
+    if (turn == 0)
+        StateSelector = StateSelector % 5;
+    
     else{
-    StateSelector = StateSelector % 2;
+        StateSelector = StateSelector % 3;
         if(StateSelector == 0)
-            StateSelector = CompStates[1].previous;
+            StateSelector = CompStates[CurrentState].previous;
             
-        else
-            StateSelector = CompStates[1].next;  
+        else if(StateSelector == 1)
+            StateSelector = StateSelector;
+        else            
+            StateSelector = CompStates[CurrentState].next;  
         
     }
-     
+    CurrentState = StateSelector;
+    StateQue[TurnCount].colorState = CompStates[StateSelector].colorState;
+    StateQue[TurnCount].red = CompStates[StateSelector].red;
+    StateQue[TurnCount].green = CompStates[StateSelector].green;
+    StateQue[TurnCount].blue = CompStates[StateSelector].blue;
 }
 
 void updateCapSense()
@@ -212,6 +226,7 @@ void UpdateLED(struct State Color){
     red_Write (Color.red);
     blue_Write (Color.blue);
     green_Write(Color.green);
+    
 }
 
 
@@ -289,13 +304,19 @@ int main()
             if(UserTurn == 0){
                 
                 SeedQue(TurnCount, CompStates);//For this current turn select a pre-programmed state
-                while (TempTurncount < TurnCount){ //cycle through the states and display them for the user
-                    UpdateLED(StateQue[TempTurncount]);
-                    CyDelay(800);
-                    TempTurncount++;
+                while (TempTurncount < TurnCount+1){ //cycle through the states and display them for the user
+                   
+                    
+                    UpdateLED(StateQue[TempTurncount]);                  
+                    CyDelay(1000);
+                    UpdateLED(CompStates[5]);
+                    CyDelay(1200);
+                    
+                    TempTurncount++;            
                 }
                 TurnCount++;
-                UserTurn = 1;
+                UserTurn = 0;
+                
             }
             //Enables capsense and records users input to compare with the computers
             else{
@@ -313,7 +334,7 @@ int main()
         
         
         CyBle_ProcessEvents();
-        CyBle_EnterLPM(CYBLE_BLESS_DEEPSLEEP);
+     //   CyBle_EnterLPM(CYBLE_BLESS_DEEPSLEEP);
     }
 }
 
